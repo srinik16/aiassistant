@@ -45,13 +45,13 @@ def _get_conversation_memory() -> ConversationBufferMemory:
 
 def _get_langchain_llm() -> Optional[ChatOpenAI]:
     """Return a cached ChatOpenAI instance if API key is available."""
-    api_key = "your-key-here"
+    api_key = os.getenv("OPEN_AI_API_KEY")
     if not api_key:
         return None
     if "langchain_llm" not in st.session_state:
         st.session_state.langchain_llm = ChatOpenAI(
             temperature=0.3,
-            model_name="gpt-3.5-turbo",
+            model_name="gpt-4o",
             openai_api_key=api_key,
         )
     return st.session_state.langchain_llm
@@ -75,19 +75,16 @@ def build_prompt(question: str, contexts: Sequence[dict]) -> list:
 
     template = ChatPromptTemplate.from_template(
         """
-        1. Never invent or assume facts that are not explicitly provided.
-        2. Always check the previous conversation history before responding.
-        3. If the user asks a question, first look at:
-        - Previous user messages
-        - Previous assistant responses
-        - The provided context/documents
-        4. If the answer exists in the previous messages, reuse that exact information.
-        5. If the information is missing, respond with:
-        "The requested information is not available in the provided context."
-        6. Keep the answer grounded in the given context.
-        7. Do not break character or explain the rules unless asked.
-        8. if no response is found in the context, respond with: "No sufficient information/question."
-        - Cite sources like [Source: filename].
+        Always check the previous conversation history before responding.
+            If the user asks a question, first look at:
+            - Previous user messages
+            - Previous assistant responses
+            - The provided context/documents
+            If the answer exists in the previous messages, reuse that exact information.
+            If the information is missing, respond with:
+            "The requested information is not available in the provided context."
+            
+            - Cite sources like [Source: filename].
 
         Context:
         {context}
@@ -119,31 +116,24 @@ def _create_sequential_chain() -> Optional[SequentialChain]:
         output_key="summary",
         prompt=PromptTemplate(
             input_variables=["context", "question", "chat_history"],
-            template="""
-            1. Never invent or assume facts that are not explicitly provided.
-            2. Always check the previous conversation history before responding.
-            3. If the user asks a question, first look at:
-            - Previous user messages
-            - Previous assistant responses
-            - The provided context/documents
-            4. If the answer exists in the previous messages, reuse that exact information.
-            5. If the information is missing, respond with:
-            "The requested information is not available in the provided context."
-            6. Keep the answer grounded in the given context.
-            7. Do not break character or explain the rules unless asked.
-            8. if no response is found in the context, respond with: "No sufficient information/question."
-            - Cite sources like [Source: filename].
+            template="""You are a helpful assistant. First, carefully review the conversation history below.
 
-            Context:
-            {context}
+Previous Conversation:
+{chat_history}
 
-            Question for reference:
-            {question}
+IMPORTANT: If the user's question has already been answered in the conversation history above, 
+you MUST reuse that exact answer. Do not search the context for information that was already discussed.
 
-            Prior conversation (for context only):
-            {chat_history}
+Only if the information is NOT in the conversation history, then use the context below:
 
-            Summary:""",
+Context from Documents:
+{context}
+
+Current Question: {question}
+
+Provide a brief summary of the relevant information, prioritizing information from the conversation history if it exists there.
+
+Summary:""",
         ),
     )
 
@@ -152,32 +142,14 @@ def _create_sequential_chain() -> Optional[SequentialChain]:
         output_key="analysis",
         prompt=PromptTemplate(
             input_variables=["summary", "question", "context"],
-            template="""
-            You are an intelligent research assistant. Use the context, summary, and analysis to answer the question.
-            1. Never invent or assume facts that are not explicitly provided.
-            2. Always check the previous conversation history before responding.
-            3. If the user asks a question, first look at:
-            - Previous user messages
-            - Previous assistant responses
-            - The provided context/documents
-            4. If the answer exists in the previous messages, reuse that exact information.
-            5. If the information is missing, respond with:
-            "The requested information is not available in the provided context."
-            6. Keep the answer grounded in the given context.
-            7. Do not break character or explain the rules unless asked.
-            8. if no response is found in the context, respond with: "No sufficient information/question."
-            - Cite sources like [Source: filename].
+            template="""Based on this summary: {summary}
 
-            Summary:
-            {summary}
+Analyze if this information fully answers the question: {question}
 
-            Context (optional reference):
-            {context}
+If the summary contains a previous answer from conversation history, note that it should be reused.
+Otherwise, identify key points from the context that help answer the question.
 
-            Question:
-            {question}
-
-            Analysis:""",
+Analysis:""",
         ),
     )
 
@@ -187,39 +159,29 @@ def _create_sequential_chain() -> Optional[SequentialChain]:
         memory=memory,
         prompt=PromptTemplate(
             input_variables=["context", "summary", "analysis", "question", "chat_history"],
-            template="""
-            You are an intelligent research assistant. Use the context, summary, and analysis to answer the question.
-            1. Never invent or assume facts that are not explicitly provided.
-            2. Always check the previous conversation history before responding.
-            3. If the user asks a question, first look at:
-            - Previous user messages
-            - Previous assistant responses
-            - The provided context/documents
-            4. If the answer exists in the previous messages, reuse that exact information.
-            5. If the information is missing, respond with:
-            "The requested information is not available in the provided context."
-            6. Keep the answer grounded in the given context.
-            7. Do not break character or explain the rules unless asked.
-            8. if no response is found in the context, respond with: "No sufficient information/question."
-            - Cite sources like [Source: filename].
+            template="""You are a helpful assistant. 
 
-            Context:
-            {context}
+Previous Conversation:
+{chat_history}
 
-            Summary:
-            {summary}
+Summary of Information:
+{summary}
 
-            Analysis:
-            {analysis}
+Analysis:
+{analysis}
 
-            Prior conversation:
-            {chat_history}
+Current Question: {question}
 
-            Question: {question}
+INSTRUCTIONS:
+1. First check if this question was already answered in the conversation history
+2. If yes, provide the same answer from the conversation history
+3. If no, use the summary and context to answer
+4. If the information is not available anywhere, respond: "The requested information is not available in the provided context."
+5. Always cite sources like [Source: filename] when using document information
 
-            Respond with a structured answer, using bullet points where it helps.
+Provide a clear, structured answer:
 
-            Answer:""",
+Answer:""",
         ),
     )
 
@@ -395,11 +357,12 @@ def _search_index(query: str, top_k: int = 4) -> List[dict]:
 
 def _call_llm(question: str, contexts: Sequence[dict]) -> str:
     """Generate an answer using multi-step reasoning when possible."""
-    api_key = "your-key-here"
+    api_key = os.getenv("OPEN_AI_API_KEY")
 
     context_block = "\n\n".join([
         f"[Source: {ctx['source']}]\n{ctx['text']}" for ctx in contexts
     ])
+    
     sources = {ctx["source"] for ctx in contexts if ctx.get("source")}
 
     if api_key:
@@ -407,38 +370,40 @@ def _call_llm(question: str, contexts: Sequence[dict]) -> str:
         if chain is not None:
             memory = _get_conversation_memory()
             
-            # Format chat history as a readable string
+            # Format chat history with clear structure
             chat_history_str = ""
             if hasattr(memory, 'chat_memory') and memory.chat_memory.messages:
                 history_parts = []
-                for msg in memory.chat_memory.messages:
-                    role = msg.type if hasattr(msg, 'type') else 'unknown'
+                for i, msg in enumerate(memory.chat_memory.messages):
+                    role = "User" if msg.type == "human" else "Assistant"
                     content = msg.content if hasattr(msg, 'content') else str(msg)
                     history_parts.append(f"{role}: {content}")
-                chat_history_str = "\n".join(history_parts)
-                #st.markdown(f"Chat history for context:\n{chat_history_str}")
+                chat_history_str = "\n\n".join(history_parts)
             
             with st.spinner("Reasoning over your documents..."):
                 status = st.empty()
                 try:
-                    status.info("Step 1/3 • Summarizing context")
-                    time.sleep(0.2)
+                    status.info("Step 1/3 • Checking conversation history")
+                    time.sleep(0.3)
+                    status.info("Step 2/3 • Analyzing context")
+                    time.sleep(0.3)
                     result = chain({
-                        "context": context_block or "(no context)",
+                        "context": context_block or "(no context available)",
                         "question": question,
                         "chat_history": chat_history_str or "(no prior conversation)",
                     })
-                    status.info("Step 2/3 • Comparing relevant details")
-                    time.sleep(0.2)
                     status.info("Step 3/3 • Crafting final answer")
-                    time.sleep(0.2)
+                    time.sleep(0.3)
                 finally:
                     status.empty()
 
             answer_text = result.get("final_answer", "")
-            if sources:
+            
+            # Only add source citations if using document context (not from chat history)
+            if sources and "conversation history" not in answer_text.lower():
                 citations = ", ".join(sorted({f"[{src}]" for src in sources}))
                 answer_text = f"{answer_text}\n\n**Sources:** {citations}"
+            
             memory.save_context({"question": question}, {"final_answer": answer_text})
             return answer_text.strip() or "No answer generated."
 
