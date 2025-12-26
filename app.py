@@ -1,3 +1,8 @@
+"""
+A modern, intelligent document chat application built with Streamlit, LangChain, and FAISS 
+for conversational Q&A over your documents using RAG (Retrieval-Augmented Generation).
+"""
+
 import os
 import textwrap
 import time
